@@ -223,6 +223,19 @@ window.Mojo = {
 		}
 		console.log("=========> Calling " + builtinFrameworkName);
 		builtinFrameworkInit(window, navigator, document);
+
+		var ac = Mojo.Controller && Mojo.Controller.AppController;
+		if (ac && ac.prototype.finishOpenStage && !ac.prototype._lunePatched) {
+			var finish = ac.prototype.finishOpenStage;
+			ac.prototype.finishOpenStage = function(w) {
+				try { Mojo.extendLightweightWindow(window, w); } catch (e) { console.error('extendLightweightWindow: ' + e); }
+				return finish.apply(this, arguments);
+			};
+			ac.prototype._lunePatched = true;
+		}
+		if (window.MojoCompat && window.MojoCompat.installFilePicker) {
+			window.MojoCompat.installFilePicker(Mojo);
+		}
 	},
 
 	/**
@@ -238,14 +251,64 @@ window.Mojo = {
 	}
 };
 
+/*
+ * LuneOS: lightweight stages are child windows driven from the opener's
+ * JavaScript context. webOS's builtin Prototype was installed into every
+ * window; the stock prototype-1.6.0.3.js loaded here only extends the
+ * opener's own DOM prototypes, so a child's body has no addClassName and
+ * StageController aborts ("body element must be extended by prototype"),
+ * leaving a black card. Copy Prototype's additions across before the
+ * framework sets the child up. Only names the child lacks are defined.
+ */
+Mojo.extendLightweightWindow = function(from, to) {
+	var names = Object.getOwnPropertyNames(from);
+	for (var i = 0; i < names.length; i++) {
+		var n = names[i];
+		if (!/^(HTML\w*Element|Element|Node|Event|Document|HTMLDocument)$/.test(n)) {
+			continue;
+		}
+		var src = from[n] && from[n].prototype, dst = to[n] && to[n].prototype;
+		if (!src || !dst || src === dst) {
+			continue;
+		}
+		var props = Object.getOwnPropertyNames(src);
+		for (var j = 0; j < props.length; j++) {
+			var d = Object.getOwnPropertyDescriptor(src, props[j]);
+			if (d && typeof d.value === 'function' && !(props[j] in dst)) {
+				Object.defineProperty(dst, props[j], d);
+			}
+		}
+	}
+	/* mojo-compat.js fills in PalmSystem members Mojo calls unguarded. A
+	 * child loads its own copy (below); this covers a stage finished
+	 * before that script has run. */
+	var fps = from.PalmSystem, tps = to.PalmSystem;
+	if (fps && tps && fps !== tps) {
+		for (var k in fps) {
+			if (tps[k] === undefined && typeof fps[k] === 'function') {
+				try { tps[k] = fps[k]; } catch (e) {}
+			}
+		}
+	}
+	/* Prototype also extends document itself (observe, fire, ...). */
+	['observe', 'stopObserving', 'fire'].forEach(function(m) {
+		if (from.document[m] && !to.document[m]) {
+			to.document[m] = from.document[m];
+		}
+	});
+};
+
 Mojo.isLightweight = document.baseURI.match(/lightweight=true/);
 if (Mojo.isLightweight) {
 	var otherMojo = window.opener.Mojo;
 	var f = function finishLoading(loadEvent) {
 		window.removeEventListener('load', arguments.callee, false);
+		try { otherMojo.extendLightweightWindow(window.opener, window); } catch (e) { console.error('extendLightweightWindow: ' + e); }
 		otherMojo.Controller.appController.finishOpenStage(loadEvent.target.defaultView);
 	};
 	window.addEventListener('load', f, false);
+	document.write('<script type="text/javascript"' +
+		' src="/usr/palm/frameworks/mojo/mojo-compat.js"><\/script>');
 	otherMojo.loadStylesheets(document, false);
 	otherMojo.loadStylesheets(document, true);
 } else {

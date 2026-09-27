@@ -27874,6 +27874,9 @@ Mojo.Animation.Dialog.animateDialogOpen(this.box,this.scrim);
 
 cleanup:function(){
 this.controller.stopListening(this.controller.scene.sceneElement,'DOMFocusIn',this.handleRefocus);
+// LuneOS: setup also adds handleRefocus with a raw addEventListener; left
+// behind, it blurs every field in the scene after the alert has closed.
+this.controller.scene.sceneElement.removeEventListener('DOMFocusIn',this.handleRefocus);
 this.controller.stopListening(this.itemsParent,Mojo.Event.tap,this._tapHandler);
 this.controller.stopListening(this.controller.element,Mojo.Event.dragStart,this._dragHandler);
 },
